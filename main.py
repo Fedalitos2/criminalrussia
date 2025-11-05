@@ -45,6 +45,17 @@ def init_db():
         )
     ''')
     
+    # Таблица предупреждений (НОВАЯ ТАБЛИЦА)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS warnings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            moderator_id INTEGER,
+            reason TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
     # Таблица черных списков
     c.execute('''
         CREATE TABLE IF NOT EXISTS blacklist (
@@ -602,7 +613,7 @@ def process_webhook_user_message(msg):
                             f"Писать могут только администраторы.")
             return False
             
-        # 2. Затем проверяем мут
+        # 2. Затем проверяем мут (используем наше общее хранилище active_mutes)
         mute_data = check_user_mute(user_id, peer_id)
         if mute_data:
             logger.info(f"🔇 Пользователь {user_id} в муте, удаляем сообщение")
@@ -760,6 +771,81 @@ def show_stats_command(user_id):
                 f"👥 Пользователей: {total_users}\n"
                 f"👑 Администраторов: {total_admins}\n"
                 f"📋 Записей в ЧС: {total_blacklist}")
+    
+def add_warning(target_id, moderator_id, reason):
+    """Добавляет предупреждение пользователю"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    # Добавляем предупреждение
+    cursor.execute(
+        "INSERT INTO warnings (user_id, moderator_id, reason) VALUES (?, ?, ?)",
+        (target_id, moderator_id, reason)
+    )
+    
+    # Получаем количество предупреждений
+    cursor.execute("SELECT COUNT(*) FROM warnings WHERE user_id = ?", (target_id,))
+    warning_count = cursor.fetchone()[0]
+    
+    conn.commit()
+    conn.close()
+    
+    logger.info(f"⚠️ Пользователь {moderator_id} выдал предупреждение {target_id}. Всего: {warning_count}/3")
+    
+    # Если 3+ предупреждений - кикаем
+    if warning_count >= 3:
+        return auto_kick_for_warnings(target_id, moderator_id)
+    
+    return warning_count
+
+def get_warning_count(user_id):
+    """Получает количество предупреждений пользователя"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM warnings WHERE user_id = ?", (user_id,))
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
+
+def get_warnings_history(user_id):
+    """Получает историю предупреждений пользователя"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT w.reason, w.created_at, u.first_name, u.last_name 
+        FROM warnings w
+        LEFT JOIN users u ON w.moderator_id = u.vk_id
+        WHERE w.user_id = ?
+        ORDER BY w.created_at DESC
+    ''', (user_id,))
+    warnings = cursor.fetchall()
+    conn.close()
+    return warnings
+
+def clear_warnings(user_id):
+    """Очищает все предупреждения пользователя"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM warnings WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+    logger.info(f"🔄 Очищены предупреждения пользователя {user_id}")
+
+def auto_kick_for_warnings(target_id, moderator_id):
+    """Автоматически кикает пользователя за 3+ предупреждений"""
+    try:
+        # Получаем все чаты где есть пользователь (нужно API для этого)
+        # Пока просто логируем - в реальности нужно получить список чатов
+        logger.info(f"🚨 Пользователь {target_id} имеет 3+ предупреждений - требуется кик")
+        
+        # Очищаем предупреждения после кика
+        clear_warnings(target_id)
+        
+        return "auto_kick"
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка автоматического кика: {e}")
+        return "error"
 
 def show_admins_list(user_id):
     """Показывает список администраторов с именами"""
@@ -791,6 +877,7 @@ def show_admins_list(user_id):
         message = "📭 Нет назначенных администраторов"
     
     send_message(user_id, message)
+    
     
         
 # Запуск Flask приложения
