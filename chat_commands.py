@@ -7,10 +7,6 @@ from vk_api.utils import get_random_id
 from leadership import add_leader, remove_leader, get_all_leaders
 from database import get_user_role, has_permission
 
-# Хранилище активных мутов и режима тишины
-active_mutes = {}
-silence_mode = {}
-
 def handle_chat_command(vk, msg, user_id, text, peer_id):
     """Обрабатывает старые команды модерации в чатах (с !)"""
     print(f"🔧 Обрабатываю старую команду в чате: {text}")
@@ -25,6 +21,7 @@ def handle_chat_command(vk, msg, user_id, text, peer_id):
     
     # Команды режима тишины
     if command == '!режим_тишины вкл' and has_permission(user_id, 3):
+        from main import silence_mode
         silence_mode[peer_id] = True
         send_chat_message(vk, peer_id, 
                         "🔇 РЕЖИМ ТИШИНЫ ВКЛЮЧЕН\n"
@@ -33,6 +30,7 @@ def handle_chat_command(vk, msg, user_id, text, peer_id):
         return
         
     elif command == '!режим_тишины выкл' and has_permission(user_id, 3):
+        from main import silence_mode
         silence_mode[peer_id] = False
         send_chat_message(vk, peer_id, "🔊 РЕЖИМ ТИШИНЫ ВЫКЛЮЧЕН", reply_to=msg['id'])
         return
@@ -113,6 +111,7 @@ def handle_new_chat_commands(vk, msg, user_id, text, peer_id):
     # Команда /silence on/off - управление режимом тишины
     if cmd_type == 'silence_on':
         if has_permission(user_id, 3):  # Только админы и выше
+            from main import silence_mode
             silence_mode[peer_id] = True
             send_chat_message(vk, peer_id, 
                             "🔇 РЕЖИМ ТИШИНЫ ВКЛЮЧЕН\n"
@@ -124,6 +123,7 @@ def handle_new_chat_commands(vk, msg, user_id, text, peer_id):
         
     elif cmd_type == 'silence_off':
         if has_permission(user_id, 3):  # Только админы и выше
+            from main import silence_mode
             silence_mode[peer_id] = False
             send_chat_message(vk, peer_id, "🔊 РЕЖИМ ТИШИНЫ ВЫКЛЮЧЕН", reply_to=msg['id'])
         else:
@@ -177,9 +177,14 @@ def handle_new_chat_commands(vk, msg, user_id, text, peer_id):
         warn_user(vk, peer_id, target_id, user_id, reason, reply_to=msg['id'])
     elif cmd_type == 'stats':
         show_user_stats(vk, peer_id, target_id, user_id, reply_to=msg['id'])
+    elif cmd_type == 'clearwarns':
+        clear_warns_user(vk, peer_id, target_id, user_id, reply_to=msg['id'])
 
 def check_user_mute(user_id, peer_id):
     """Проверяет, находится ли пользователь в муте"""
+    # Импортируем общее хранилище мутов из main.py
+    from main import active_mutes
+    
     if user_id in active_mutes:
         mute_data = active_mutes[user_id]
         # Проверяем что мут в этом чате и время не истекло
@@ -211,6 +216,7 @@ def process_user_message(vk, msg):
             return True
             
         # 1. Сначала проверяем режим тишины
+        from main import silence_mode
         if peer_id in silence_mode and silence_mode[peer_id]:
             print(f"🔇 Удаляем сообщение в режиме тишины от пользователя {user_id}")
             delete_user_message(vk, peer_id, message_id, user_id)
@@ -256,6 +262,9 @@ def delete_user_message(vk, peer_id, message_id, user_id):
 
 def cleanup_expired_mutes():
     """Очищает истекшие муты"""
+    # Импортируем общее хранилище мутов из main.py
+    from main import active_mutes
+    
     current_time = datetime.now()
     expired_users = []
     
@@ -298,6 +307,9 @@ def show_help(vk, peer_id, user_id, reply_to=None):
 
 • /warn @user [причина] - выдать предупреждение
   Пример: /warn @id123456 Грубое поведение
+  ⚠️ 3 предупреждения = автоматический кик!
+
+• /clearwarns @user - очистить предупреждения пользователя
 
 • /silence on - включить режим тишины
 • /silence off - выключить режим тишины
@@ -511,6 +523,9 @@ def parse_new_moderation_command(text):
         # Команда /стата может быть без упоминания (показывает статистику отправителя)
         if cmd_type == 'стата':
             return ('stats', 'self', 0, '', '')
+        # Команда /clearwarns может быть без упоминания (очищает свои предупреждения)
+        if cmd_type == 'clearwarns':
+            return ('clearwarns', 'self', 0, '', '')
         return None
     
     target_mention = parts[1]
@@ -550,6 +565,8 @@ def parse_new_moderation_command(text):
         return ('warn', target_mention, 0, reason, '')
     elif cmd_type == 'стата':
         return ('stats', target_mention, 0, '', '')
+    elif cmd_type == 'clearwarns':
+        return ('clearwarns', target_mention, 0, '', '')
     elif cmd_type == 'назначить':
         if len(parts) >= 3:
             position = ' '.join(parts[2:])
@@ -607,6 +624,9 @@ def mute_user(vk, peer_id, target_id, moderator_id, duration_minutes, reason, re
     """Выдает мут пользователю"""
     print(f"🔧 Выдаем мут пользователю {target_id} на {duration_minutes} минут")
     
+    # Импортируем общее хранилище мутов из main.py
+    from main import active_mutes
+    
     mute_until = datetime.now() + timedelta(minutes=duration_minutes)
     active_mutes[target_id] = {
         'until': mute_until,
@@ -632,6 +652,9 @@ def mute_user(vk, peer_id, target_id, moderator_id, duration_minutes, reason, re
 def unmute_user(vk, peer_id, target_id, moderator_id, reply_to=None):
     """Снимает мут"""
     print(f"🔧 Снимаем мут с пользователя {target_id}")
+    
+    # Импортируем общее хранилище мутов из main.py
+    from main import active_mutes
     
     if target_id in active_mutes:
         del active_mutes[target_id]
@@ -697,9 +720,9 @@ def ban_user(vk, peer_id, target_id, moderator_id, duration_days, reason, reply_
         print("✅ Пользователь кикнут")
         
         # Затем добавляем в черный список
-        from blacklist import add_blacklist as add_to_blacklist
+        from blacklist import add_blacklist
         nickname = f"id{target_id}"
-        add_to_blacklist(nickname, "ЧСП", duration_days, reason, moderator_id)
+        add_blacklist(None, nickname, "ЧСП", moderator_id, duration_days, reason)
         print("✅ Пользователь добавлен в ЧС")
         
         target_info = get_user_info(vk, target_id)
@@ -726,18 +749,53 @@ def warn_user(vk, peer_id, target_id, moderator_id, reason, reply_to=None):
     """Выдает предупреждение пользователю"""
     print(f"🔧 Выдаем предупреждение пользователю {target_id}")
     
+    try:
+        # Импортируем функцию из main.py
+        from main import add_warning
+        
+        warning_count = add_warning(target_id, moderator_id, reason)
+        
+        target_info = get_user_info(vk, target_id)
+        moderator_info = get_user_info(vk, moderator_id)
+        
+        if warning_count == "auto_kick":
+            send_chat_message(vk, peer_id,
+                            f"🚨 АВТОМАТИЧЕСКИЙ КИК\n"
+                            f"👤 Пользователь: {target_info}\n"
+                            f"📝 Причина: 3+ предупреждений\n"
+                            f"👮 Система: Автоматически",
+                            reply_to=reply_to)
+        else:
+            send_chat_message(vk, peer_id,
+                            f"⚠️ ПРЕДУПРЕЖДЕНИЕ ВЫДАНО\n"
+                            f"👤 Пользователь: {target_info}\n"
+                            f"📝 Причина: {reason}\n"
+                            f"👮 Модератор: {moderator_info}\n"
+                            f"🔢 Всего предупреждений: {warning_count}/3",
+                            reply_to=reply_to)
+                            
+    except Exception as e:
+        print(f"❌ Ошибка выдачи предупреждения: {e}")
+        send_chat_message(vk, peer_id, "❌ Ошибка выдачи предупреждения", reply_to=reply_to)
+
+def clear_warns_user(vk, peer_id, target_id, moderator_id, reply_to=None):
+    """Очищает предупреждения пользователя"""
+    print(f"🔧 Очищаем предупреждения пользователя {target_id}")
+    
+    from main import clear_warnings
+    clear_warnings(target_id)
+    
     target_info = get_user_info(vk, target_id)
     moderator_info = get_user_info(vk, moderator_id)
     
     send_chat_message(vk, peer_id,
-                    f"⚠️ ПРЕДУПРЕЖДЕНИЕ ВЫДАНО\n"
+                    f"🔄 ПРЕДУПРЕЖДЕНИЯ ОЧИЩЕНЫ\n"
                     f"👤 Пользователь: {target_info}\n"
-                    f"📝 Причина: {reason}\n"
                     f"👮 Модератор: {moderator_info}",
                     reply_to=reply_to)
 
 def show_user_stats(vk, peer_id, target_id, moderator_id, reply_to=None):
-    """Показывает статистику пользователя"""
+    """Показывает статистику пользователя с предупреждениями"""
     print(f"🔧 Показываем статистику пользователя {target_id}")
     
     # Если target_id = 'self', показываем статистику отправителя
@@ -746,15 +804,24 @@ def show_user_stats(vk, peer_id, target_id, moderator_id, reply_to=None):
     
     target_info = get_user_info(vk, target_id)
     
-    # Здесь можно добавить получение реальной статистики из БД
-    send_chat_message(vk, peer_id,
-                    f"📊 СТАТИСТИКА ПОЛЬЗОВАТЕЛЯ\n"
-                    f"👤 Пользователь: {target_info}\n"
-                    f"📈 Сообщений: 0\n"
-                    f"⚠️ Предупреждений: 0\n"
-                    f"🔇 Мутов: 0\n"
-                    f"⛔ Банов: 0",
-                    reply_to=reply_to)
+    # Получаем количество предупреждений
+    from main import get_warning_count, get_warnings_history
+    warning_count = get_warning_count(target_id)
+    warnings_history = get_warnings_history(target_id)
+    
+    message = f"📊 СТАТИСТИКА ПОЛЬЗОВАТЕЛЯ\n"
+    message += f"👤 Пользователь: {target_info}\n"
+    message += f"📈 Сообщений: 0\n"
+    message += f"⚠️ Предупреждений: {warning_count}/3\n"
+    
+    # Показываем последние 3 предупреждения
+    if warnings_history:
+        message += f"\n📝 Последние предупреждения:\n"
+        for i, (reason, date, mod_first, mod_last) in enumerate(warnings_history[:3], 1):
+            mod_name = f"{mod_first} {mod_last}" if mod_first and mod_last else "Система"
+            message += f"{i}. {reason} ({date.split()[0]}, {mod_name})\n"
+    
+    send_chat_message(vk, peer_id, message, reply_to=reply_to)
 
 def format_duration(minutes):
     """Форматирует длительность в читаемый вид"""
