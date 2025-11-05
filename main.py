@@ -279,50 +279,60 @@ def webhook():
     
     return 'ok'
 
-def process_webhook_message(msg):
-    """Обрабатывает сообщение из вебхука"""
+def process_webhook_user_message(msg):
+    """Проверяет все сообщения на муты и режим тишины"""
     try:
-        user_id = msg['from_id']
-        text = msg.get('text', '').strip()
         peer_id = msg.get('peer_id', 0)
+        user_id = msg.get('from_id', 0)
         message_id = msg.get('id', 0)
+        text = msg.get('text', '')
         
-        # Определяем тип чата
-        is_chat = peer_id > 2000000000  # Беседа
-        is_dm = peer_id == user_id      # Личное сообщение
-        
-        logger.info(f"📨 Сообщение от {user_id} в {'чате' if is_chat else 'ЛС'}: {text}")
-        
-        # Добавляем пользователя в базу
-        add_user(user_id)
-        
-        # ОБРАБОТКА КОМАНД В ЧАТАХ
-        if is_chat:
-            # Сначала проверяем муты и режим тишины для ВСЕХ сообщений
-            if not process_webhook_user_message(msg):
-                return  # Сообщение удалено (мут или режим тишины)
+        # Проверяем что это беседа
+        if peer_id < 2000000000:
+            return True
             
-            # Затем обрабатываем команды
-            if text.startswith('/') or text.lower() == 'кто':
-                logger.info(f"🔧 Обрабатываем команду в чате: {text}")
-                handle_new_chat_commands(vk, msg, user_id, text, peer_id)
-                return
+        logger.info(f"🔍 Проверка сообщения от {user_id} в чате {peer_id}: {text}")
             
-            # Старые команды с ! (для обратной совместимости)
-            if text.startswith('!'):
-                logger.info(f"🔧 Обрабатываем старую команду в чате: {text}")
-                handle_chat_command(vk, msg, user_id, text, peer_id)
-                return
+        # Игнорируем команды бота и сообщения от админов
+        if text.startswith('/') or text.startswith('!') or text.lower() == 'кто':
+            logger.info(f"🔧 Игнорируем команду бота")
+            return True
+            
+        # Проверяем права пользователя (админы игнорируют ограничения)
+        if has_permission(user_id, 2):  # Модераторы и выше могут писать всегда
+            logger.info(f"👑 Администратор {user_id} может писать всегда")
+            return True
+            
+        # 1. Сначала проверяем режим тишины
+        if peer_id in silence_mode and silence_mode[peer_id]:
+            logger.info(f"🔇 Удаляем сообщение в режиме тишины от пользователя {user_id}")
+            delete_user_message(peer_id, message_id, user_id)
+            send_chat_message(peer_id, 
+                            f"🔇 Сообщение удалено. Режим тишины включен.\n"
+                            f"Писать могут только администраторы.")
+            return False
+            
+        # 2. Затем проверяем мут
+        mute_data = check_user_mute(user_id, peer_id)
+        if mute_data:
+            logger.info(f"🔇 Пользователь {user_id} в муте, удаляем сообщение")
+            delete_user_message(peer_id, message_id, user_id)
+            
+            # Отправляем уведомление о муте
+            time_left = mute_data['until'] - datetime.now()
+            minutes_left = max(1, int(time_left.total_seconds() / 60))
+            
+            send_chat_message(peer_id,
+                            f"🔇 Вы в муте! Осталось: {minutes_left} мин.\n"
+                            f"До: {mute_data['until'].strftime('%H:%M:%S')}")
+            return False
+            
+        logger.info(f"✅ Пользователь {user_id} может писать")
+        return True
         
-        # ОБРАБОТКА ЛИЧНЫХ СООБЩЕНИЙ
-        if is_dm:
-            logger.info(f"🔧 Обрабатываем ЛС: {text}")
-            process_dm_message(user_id, text, msg)
-            
     except Exception as e:
-        logger.error(f"❌ Ошибка обработки сообщения: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"❌ Ошибка в process_webhook_user_message: {e}")
+        return True
 
 def process_dm_message(user_id, text, msg):
     """Обрабатывает личные сообщения"""
@@ -799,7 +809,9 @@ def add_warning(target_id, moderator_id, reason):
     
     # Если 3+ предупреждений - кикаем из всех чатов
     if warning_count >= 3:
-        return auto_kick_for_warnings(target_id, moderator_id)
+        result = auto_kick_for_warnings(target_id, moderator_id)
+        if result == "auto_kick":
+            return "auto_kick"
     
     return warning_count
 
@@ -811,19 +823,69 @@ def auto_kick_for_warnings(target_id, moderator_id):
         # Получаем информацию о пользователе
         target_info = get_user_info(target_id)
         
-        # Здесь должна быть логика получения всех чатов и кика оттуда
-        # Пока просто логируем и очищаем предупреждения
+        # Получаем все беседы, где есть бот
+        conversations = vk.messages.getConversations(filter="all", count=200)
+        
+        kicked_from = []
+        
+        for conv in conversations['items']:
+            if conv['conversation']['peer']['type'] == 'chat':
+                peer_id = conv['conversation']['peer']['local_id'] + 2000000000
+                chat_id = conv['conversation']['peer']['local_id']
+                
+                try:
+                    # Пробуем кикнуть пользователя из беседы
+                    vk.messages.removeChatUser(
+                        chat_id=chat_id,
+                        member_id=target_id
+                    )
+                    kicked_from.append(chat_id)
+                    logger.info(f"✅ Пользователь {target_id} кикнут из чата {chat_id}")
+                    
+                except Exception as e:
+                    # Игнорируем ошибки (нет прав, пользователя нет в чате и т.д.)
+                    logger.debug(f"⚠️ Не удалось кикнуть из чата {chat_id}: {e}")
         
         # Очищаем предупреждения после кика
         clear_warnings(target_id)
         
-        logger.info(f"✅ Пользователь {target_id} автоматически кикнут за 3+ предупреждений")
+        logger.info(f"✅ Пользователь {target_id} автоматически кикнут из {len(kicked_from)} чатов за 3+ предупреждений")
+        
+        # Отправляем уведомление администраторам
+        if kicked_from:
+            notify_admins_about_auto_kick(target_id, target_info, len(kicked_from))
         
         return "auto_kick"
         
     except Exception as e:
         logger.error(f"❌ Ошибка автоматического кика: {e}")
         return "error"
+
+def notify_admins_about_auto_kick(target_id, target_info, chat_count):
+    """Уведомляет администраторов об автоматическом кике"""
+    try:
+        # Получаем список администраторов
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("SELECT vk_id FROM users WHERE role >= 2")  # Модераторы и выше
+        admins = cursor.fetchall()
+        conn.close()
+        
+        message = (f"🚨 АВТОМАТИЧЕСКИЙ КИК\n"
+                  f"👤 Пользователь: {target_info}\n"
+                  f"📊 Кикнут из {chat_count} чатов\n"
+                  f"💬 Причина: 3+ предупреждений\n"
+                  f"⏰ Время: {datetime.now().strftime('%H:%M:%S %d.%m.%Y')}")
+        
+        for admin in admins:
+            admin_id = admin[0]
+            try:
+                send_message(admin_id, message)
+            except Exception as e:
+                logger.error(f"❌ Не удалось уведомить администратора {admin_id}: {e}")
+                
+    except Exception as e:
+        logger.error(f"❌ Ошибка уведомления администраторов: {e}")
 
 def get_warning_count(user_id):
     """Получает количество предупреждений пользователя"""
