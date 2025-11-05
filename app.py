@@ -448,7 +448,8 @@ def format_duration(minutes):
         days = minutes // 1440
         return f"{days} дней"
 
-# Запуск Flask приложения
+# В конец app.py добавьте:
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+    print(f"✅ Webhook бот запущен на порту {port}")
