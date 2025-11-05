@@ -8,6 +8,7 @@ import json
 from datetime import datetime, timedelta
 import threading
 import time
+import logging
 
 # Импорт модулей
 from config import VK_TOKEN, GROUP_ID, DB_PATH, FOUNDER_ID, ROLES, BLACKLIST_TYPES
@@ -16,6 +17,10 @@ from chat_commands import handle_chat_command, handle_new_chat_commands, process
 from blacklist import ensure_tables, get_expired_entries, remove_blacklist_record
 
 app = Flask(__name__)
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 print("🚀 Запуск VK-бота на Webhooks...")
 
@@ -151,8 +156,9 @@ def send_message(user_id, message, keyboard=None):
         if keyboard:
             params["keyboard"] = keyboard
         vk.messages.send(**params)
+        logger.info(f"✅ Сообщение отправлено пользователю {user_id}")
     except Exception as e:
-        print(f"❌ Ошибка отправки сообщения: {e}")
+        logger.error(f"❌ Ошибка отправки сообщения: {e}")
 
 def send_chat_message(peer_id, message, reply_to=None):
     """Отправляет сообщение в чат"""
@@ -165,8 +171,9 @@ def send_chat_message(peer_id, message, reply_to=None):
         if reply_to:
             params["reply_to"] = reply_to
         vk.messages.send(**params)
+        logger.info(f"✅ Сообщение отправлено в чат {peer_id}")
     except Exception as e:
-        print(f"❌ Ошибка отправки в чат: {e}")
+        logger.error(f"❌ Ошибка отправки в чат: {e}")
 
 def add_user(vk_id):
     """Добавляет пользователя в базу"""
@@ -202,39 +209,61 @@ def get_user_info(user_id):
             user = users[0]
             return f"[id{user_id}|{user['first_name']} {user['last_name']}]"
     except Exception as e:
-        print(f"❌ Ошибка получения информации о пользователе {user_id}: {e}")
+        logger.error(f"❌ Ошибка получения информации о пользователе {user_id}: {e}")
     return f"[id{user_id}|Пользователь]"
 
 # Webhook обработчики
+@app.route('/')
+def home():
+    """Корневой маршрут для проверки работы"""
+    return '✅ VK Bot is running! Send messages to /webhook'
+
 @app.route('/webhook', methods=['POST', 'GET'])
 def webhook():
     """Основной обработчик вебхуков от VK"""
+    logger.info(f"📨 Получен запрос: {request.method} {request.url}")
+    
     if request.method == 'GET':
         # Подтверждение сервера
         confirmation_token = request.args.get('hub.challenge')
+        logger.info(f"🔧 GET запрос от VK: {dict(request.args)}")
+        
         if confirmation_token:
+            logger.info("✅ Подтверждение вебхука получено")
             return confirmation_token
         return 'OK'
     
     # Обработка POST запросов (события)
-    data = request.get_json()
-    
-    if not data:
+    try:
+        data = request.get_json()
+    except Exception as e:
+        logger.error(f"❌ Ошибка парсинга JSON: {e}")
         return 'ok'
     
-    print(f"📨 Получено событие: {data}")
+    if not data:
+        logger.warning("⚠️ Пустой JSON в запросе")
+        return 'ok'
+    
+    logger.info(f"📨 Получено событие: {data}")
     
     # Обработка типа события
     event_type = data.get('type')
+    logger.info(f"🔧 Тип события: {event_type}")
     
     if event_type == 'confirmation':
-        # Возвращаем токен подтверждения из config.py
+        logger.info("🔧 Запрос подтверждения вебхука")
         from config import CONFIRMATION_TOKEN
-        return CONFIRMATION_TOKEN if CONFIRMATION_TOKEN else 'confirmation_token'
+        token = CONFIRMATION_TOKEN if CONFIRMATION_TOKEN else 'confirmation_token'
+        logger.info(f"🔧 Возвращаем токен: {token}")
+        return token
     
     elif event_type == 'message_new':
         message = data['object']['message']
+        logger.info(f"📨 Новое сообщение от {message.get('from_id')}: {message.get('text')}")
         process_webhook_message(message)
+    
+    else:
+        logger.warning(f"⚠️ Неизвестный тип события: {event_type}")
     
     return 'ok'
 
@@ -250,7 +279,7 @@ def process_webhook_message(msg):
         is_chat = peer_id > 2000000000  # Беседа
         is_dm = peer_id == user_id      # Личное сообщение
         
-        print(f"📨 Сообщение от {user_id} в {'чате' if is_chat else 'ЛС'}: {text}")
+        logger.info(f"📨 Сообщение от {user_id} в {'чате' if is_chat else 'ЛС'}: {text}")
         
         # Добавляем пользователя в базу
         add_user(user_id)
@@ -263,20 +292,23 @@ def process_webhook_message(msg):
             
             # Затем обрабатываем команды
             if text.startswith('/') or text.lower() == 'кто':
+                logger.info(f"🔧 Обрабатываем команду в чате: {text}")
                 handle_new_chat_commands(vk, msg, user_id, text, peer_id)
                 return
             
             # Старые команды с ! (для обратной совместимости)
             if text.startswith('!'):
+                logger.info(f"🔧 Обрабатываем старую команду в чате: {text}")
                 handle_chat_command(vk, msg, user_id, text, peer_id)
                 return
         
         # ОБРАБОТКА ЛИЧНЫХ СООБЩЕНИЙ
         if is_dm:
+            logger.info(f"🔧 Обрабатываем ЛС: {text}")
             process_dm_message(user_id, text, msg)
             
     except Exception as e:
-        print(f"❌ Ошибка обработки сообщения: {e}")
+        logger.error(f"❌ Ошибка обработки сообщения: {e}")
         import traceback
         traceback.print_exc()
 
@@ -302,7 +334,7 @@ def process_webhook_user_message(msg):
             
         # 1. Сначала проверяем режим тишины
         if peer_id in silence_mode and silence_mode[peer_id]:
-            print(f"🔇 Удаляем сообщение в режиме тишины от пользователя {user_id}")
+            logger.info(f"🔇 Удаляем сообщение в режиме тишины от пользователя {user_id}")
             delete_user_message(peer_id, message_id, user_id)
             send_chat_message(peer_id, 
                             f"🔇 Сообщение удалено. Режим тишины включен.\n"
@@ -312,7 +344,7 @@ def process_webhook_user_message(msg):
         # 2. Затем проверяем мут
         mute_data = check_user_mute(user_id, peer_id)
         if mute_data:
-            print(f"🔇 Пользователь {user_id} в муте, удаляем сообщение")
+            logger.info(f"🔇 Пользователь {user_id} в муте, удаляем сообщение")
             delete_user_message(peer_id, message_id, user_id)
             
             # Отправляем уведомление о муте
@@ -327,7 +359,7 @@ def process_webhook_user_message(msg):
         return True
         
     except Exception as e:
-        print(f"❌ Ошибка в process_webhook_user_message: {e}")
+        logger.error(f"❌ Ошибка в process_webhook_user_message: {e}")
         return True
 
 def delete_user_message(peer_id, message_id, user_id):
@@ -338,10 +370,10 @@ def delete_user_message(peer_id, message_id, user_id):
             delete_for_all=True,
             peer_id=peer_id
         )
-        print(f"✅ Сообщение {message_id} от пользователя {user_id} удалено")
+        logger.info(f"✅ Сообщение {message_id} от пользователя {user_id} удалено")
         return True
     except Exception as e:
-        print(f"❌ Ошибка удаления сообщения {message_id}: {e}")
+        logger.error(f"❌ Ошибка удаления сообщения {message_id}: {e}")
         return False
 
 def check_user_mute(user_id, peer_id):
@@ -413,5 +445,5 @@ def process_dm_message(user_id, text, msg):
 # Запуск Flask приложения
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
+    logger.info(f"🚀 Запуск Flask приложения на порту {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
-    print(f"✅ Webhook бот запущен на порту {port}")
