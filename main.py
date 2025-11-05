@@ -387,195 +387,28 @@ def check_user_mute(user_id, peer_id):
     
     return None
 
-def process_dm_message(user_id, text, msg):
-    """Обрабатывает личные сообщения"""
-    current_state = user_states.get(user_id, {})
+def set_user_role(target_id, role_level, moderator_id):
+    """Назначает роль пользователю"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("INSERT OR REPLACE INTO users (vk_id, role) VALUES (?, ?)", 
+                  (target_id, role_level))
+    conn.commit()
+    conn.close()
     
-    # Обработка пошаговых действий для добавления в ЧС
-    if current_state.get('action') == 'adding_blacklist':
-        if current_state.get('step') == 1:  # Ожидаем ник
-            user_states[user_id] = {
-                'action': 'adding_blacklist',
-                'step': 2,
-                'nickname': text
-            }
-            keyboard = create_blacklist_types_keyboard()
-            send_message(user_id, "📂 Выберите тип черного списка:", keyboard=keyboard)
-            return
-            
-        elif current_state.get('step') == 2:  # Ожидаем тип ЧС
-            if text.upper() in BLACKLIST_TYPES:
-                user_states[user_id] = {
-                    'action': 'adding_blacklist', 
-                    'step': 3,
-                    'nickname': current_state['nickname'],
-                    'bl_type': text.upper()
-                }
-                send_message(user_id, "⏳ Введите срок в днях (0 для бессрочно):")
-            else:
-                send_message(user_id, "❌ Неверный тип ЧС. Выберите из предложенных:")
-            return
-                
-        elif current_state.get('step') == 3:  # Ожидаем срок
-            try:
-                days = int(text)
-                if days < 0:
-                    raise ValueError
-                
-                user_states[user_id] = {
-                    'action': 'adding_blacklist',
-                    'step': 4, 
-                    'nickname': current_state['nickname'],
-                    'bl_type': current_state['bl_type'],
-                    'days': days
-                }
-                send_message(user_id, "📝 Введите причину:")
-            except ValueError:
-                send_message(user_id, "❌ Введите корректное число дней:")
-            return
-                
-        elif current_state.get('step') == 4:  # Ожидаем причину
-            nickname = current_state['nickname']
-            bl_type = current_state['bl_type']
-            days = current_state['days']
-            
-            # Добавляем в ЧС
-            from blacklist import add_blacklist
-            add_blacklist(None, nickname, bl_type, user_id, days, text)
-            
-            days_text = "бессрочно" if days == 0 else f"{days} дней"
-            keyboard = create_admin_keyboard(user_id)
-            send_message(user_id, 
-                       f"✅ Игрок {nickname} добавлен в {bl_type}\n"
-                       f"⏰ Срок: {days_text}\n"
-                       f"📝 Причина: {text}",
-                       keyboard=keyboard)
-            
-            # Завершаем действие
-            user_states.pop(user_id, None)
-        return
-    
-    # Обработка пошаговых действий для удаления из ЧС
-    elif current_state.get('action') == 'removing_blacklist':
-        if current_state.get('step') == 1:  # Ожидаем ник
-            user_states[user_id] = {
-                'action': 'removing_blacklist',
-                'step': 2, 
-                'nickname': text
-            }
-            send_message(user_id, "📂 Введите тип ЧС для удаления:")
-            return
-            
-        elif current_state.get('step') == 2:  # Ожидаем тип ЧС
-            nickname = current_state['nickname']
-            bl_type = text.upper()
-            
-            from blacklist import remove_blacklist_by_nickname
-            if remove_blacklist_by_nickname(nickname, bl_type):
-                keyboard = create_admin_keyboard(user_id)
-                send_message(user_id, f"✅ Игрок {nickname} удален из {bl_type}", keyboard=keyboard)
-            else:
-                keyboard = create_admin_keyboard(user_id)
-                send_message(user_id, f"❌ Игрок {nickname} не найден в {bl_type}", keyboard=keyboard)
-            
-            user_states.pop(user_id, None)
-        return
+    # Логируем действие
+    logger.info(f"👑 Пользователь {moderator_id} назначил роль {role_level} пользователю {target_id}")
 
-    # Обработка обычных команд
-    text_lower = text.lower()
+def remove_user_role(target_id, moderator_id):
+    """Снимает роль пользователя (делает обычным пользователем)"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET role = 1 WHERE vk_id = ?", (target_id,))
+    conn.commit()
+    conn.close()
     
-    if text_lower in ['начать', 'start', '/start']:
-        send_message(user_id, 
-                   "👋 Привет! Я профессиональный бот-модератор\n\n"
-                   "📋 Основные функции:\n"
-                   "• Управление черных списков\n"
-                   "• Модерация чатов\n"
-                   "• Режим тишины\n"
-                   "• Система ролей\n\n"
-                   "Напиши 'помощь' для списка команд.")
-    
-    elif text_lower == 'помощь':
-        help_text = "📋 Доступные команды:\n" \
-                   "• начать - начать работу\n" \
-                   "• помощь - это сообщение\n" \
-                   "• моя роль - узнать свою роль\n" \
-                   "• панель - админ-панель (если есть права)\n"
-        
-        if has_permission(user_id, 4):
-            help_text += "• роль <id> <уровень> - назначить роль\n" \
-                       "• роли - список администраторов\n"
-        
-        send_message(user_id, help_text)
-    
-    elif text_lower == 'моя роль':
-        role_level = get_user_role(user_id)
-        role_name = get_role_name(role_level)
-        send_message(user_id, f"🎭 Ваша роль: {role_name} (уровень {role_level})")
-    
-    elif text_lower == 'панель':
-        if has_permission(user_id, 2):  # Модератор и выше
-            role_name = get_role_name(get_user_role(user_id))
-            keyboard = create_admin_keyboard(user_id)
-            send_message(user_id, 
-                       f"🛠 Добро пожаловать в админ-панель, {role_name}!\n\n"
-                       f"📊 Ваши права:\n"
-                       f"{'• Мут/Кик/Бан' if has_permission(user_id, 2) else ''}\n"
-                       f"{'• Черные списки' if has_permission(user_id, 3) else ''}\n"
-                       f"{'• Назначение ролей' if has_permission(user_id, 4) else ''}",
-                       keyboard=keyboard)
-        else:
-            send_message(user_id, "❌ У вас нет доступа к админ-панели")
-    
-    # Обработка кнопок админ-панели
-    elif text == '📋 Чёрные списки':
-        if has_permission(user_id, 3):
-            show_blacklist_command(user_id)
-        else:
-            send_message(user_id, "❌ Недостаточно прав")
-    
-    elif text == '➕ Добавить в ЧС':
-        if has_permission(user_id, 3):
-            user_states[user_id] = {'action': 'adding_blacklist', 'step': 1}
-            send_message(user_id, "✏️ Введите ник игрока для добавления в ЧС:")
-        else:
-            send_message(user_id, "❌ Недостаточно прав")
-    
-    elif text == '🗑 Удалить из ЧС':
-        if has_permission(user_id, 3):
-            user_states[user_id] = {'action': 'removing_blacklist', 'step': 1}
-            send_message(user_id, "✏️ Введите ник игрока для удаления из ЧС:")
-        else:
-            send_message(user_id, "❌ Недостаточно прав")
-    
-    elif text == '📊 Статистика':
-        if has_permission(user_id, 2):
-            show_stats_command(user_id)
-        else:
-            send_message(user_id, "❌ Недостаточно прав")
-    
-    elif text == '👥 Управление ролями':
-        if has_permission(user_id, 4):
-            keyboard = create_roles_management_keyboard()
-            send_message(user_id, "👑 Управление ролями\n\nВыберите действие:", keyboard=keyboard)
-        else:
-            send_message(user_id, "❌ Недостаточно прав")
-    
-    elif text == '📋 Список администраторов':
-        if has_permission(user_id, 4):
-            show_admins_list(user_id)
-        else:
-            send_message(user_id, "❌ Недостаточно прав")
-    
-    elif text == '🔙 В панель':
-        keyboard = create_admin_keyboard(user_id)
-        send_message(user_id, "🔙 Возврат в админ-панель", keyboard=keyboard)
-    
-    elif text == '🚪 Выйти':
-        user_states.pop(user_id, None)
-        send_message(user_id, "🚪 Вы вышли из админ-панели")
-    
-    else:
-        send_message(user_id, "🤔 Не понимаю команду. Напиши 'помощь' для списка команд.")
+    # Логируем действие
+    logger.info(f"👑 Пользователь {moderator_id} снял роль с пользователя {target_id}")
         
 def create_admin_keyboard(user_id):
     """Создает клавиатуру админ-панели"""
@@ -669,7 +502,7 @@ def show_stats_command(user_id):
                 f"📋 Записей в ЧС: {total_blacklist}")
 
 def show_admins_list(user_id):
-    """Показывает список администраторов"""
+    """Показывает список администраторов с именами"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("SELECT vk_id, role FROM users WHERE role > 1 ORDER BY role DESC")
@@ -681,7 +514,18 @@ def show_admins_list(user_id):
         for admin in admins:
             admin_id, role_level = admin
             role_name = get_role_name(role_level)
-            user_info = get_user_info(admin_id)
+            
+            # Получаем информацию о пользователе с именем
+            try:
+                users = vk.users.get(user_ids=admin_id, fields="first_name,last_name")
+                if users:
+                    user = users[0]
+                    user_info = f"[id{admin_id}|{user['first_name']} {user['last_name']}]"
+                else:
+                    user_info = f"[id{admin_id}|Пользователь]"
+            except:
+                user_info = f"[id{admin_id}|Пользователь]"
+            
             message += f"• {user_info} - {role_name} (уровень {role_level})\n"
     else:
         message = "📭 Нет назначенных администраторов"
