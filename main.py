@@ -272,12 +272,61 @@ def webhook():
     elif event_type == 'message_new':
         message = data['object']['message']
         logger.info(f"📨 Новое сообщение от {message.get('from_id')}: {message.get('text')}")
-        process_webhook_message(message)
+        process_webhook_message(message)  # Теперь эта функция определена
     
     else:
         logger.warning(f"⚠️ Неизвестный тип события: {event_type}")
     
     return 'ok'
+
+def process_webhook_message(msg):
+    """Обрабатывает сообщение из вебхука"""
+    try:
+        user_id = msg['from_id']
+        text = msg.get('text', '').strip()
+        peer_id = msg.get('peer_id', 0)
+        message_id = msg.get('id', 0)
+        
+        # Определяем тип чата
+        is_chat = peer_id > 2000000000  # Беседа
+        is_dm = peer_id == user_id      # Личное сообщение
+        
+        logger.info(f"📨 Сообщение от {user_id} в {'чате' if is_chat else 'ЛС'}: {text}")
+        
+        # Добавляем пользователя в базу
+        add_user(user_id)
+        
+        # ОБРАБОТКА КОМАНД В ЧАТАХ
+        if is_chat:
+            # Сначала проверяем муты и режим тишины для ВСЕХ сообщений
+            if not process_webhook_user_message(msg):
+                return  # Сообщение удалено (мут или режим тишины)
+            
+            # Затем обрабатываем команды
+            if text.startswith('/') or text.lower() == 'кто':
+                logger.info(f"🔧 Обрабатываем команду в чате: {text}")
+                handle_new_chat_commands(vk, msg, user_id, text, peer_id)
+                return
+            
+            # Старые команды с ! (для обратной совместимости)
+            if text.startswith('!'):
+                logger.info(f"🔧 Обрабатываем старую команду в чате: {text}")
+                handle_chat_command(vk, msg, user_id, text, peer_id)
+                return
+            
+            # Если это обычное сообщение (не команда), просто выходим
+            # так как проверка на мут/тишину уже выполнена выше
+            return
+        
+        # ОБРАБОТКА ЛИЧНЫХ СООБЩЕНИЙ
+        if is_dm:
+            logger.info(f"🔧 Обрабатываем ЛС: {text}")
+            process_dm_message(user_id, text, msg)
+            
+    except Exception as e:
+        logger.error(f"❌ Ошибка обработки сообщения: {e}")
+        import traceback
+        traceback.print_exc()
 
 def process_webhook_user_message(msg):
     """Проверяет все сообщения на муты и режим тишины"""
