@@ -100,3 +100,13 @@ def get_expired_entries() -> List[Tuple]:
         except Exception:
             continue
     return expired
+
+def remove_blacklist_by_nickname(nickname: str, type_: str) -> bool:
+    """Удаляет запись из ЧС по нику и типу"""
+    conn = sqlite3.connect(DB_PATH)
+    cur = conn.cursor()
+    cur.execute("DELETE FROM blacklist WHERE nickname = ? AND type = ?", (nickname, type_))
+    changed = cur.rowcount
+    conn.commit()
+    conn.close()
+    return changed > 0
