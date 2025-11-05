@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import threading
 import time
 import logging
+from vk_api.keyboard import VkKeyboard, VkKeyboardColor
 
 # Импорт модулей
 from config import VK_TOKEN, GROUP_ID, DB_PATH, FOUNDER_ID, ROLES, BLACKLIST_TYPES
@@ -430,18 +431,165 @@ def process_dm_message(user_id, text, msg):
     elif text_lower == 'панель':
         if has_permission(user_id, 2):  # Модератор и выше
             role_name = get_role_name(get_user_role(user_id))
+            # Вместо текста отправляем клавиатуру с кнопками
+            keyboard = create_admin_keyboard(user_id)
             send_message(user_id, 
                        f"🛠 Добро пожаловать в админ-панель, {role_name}!\n\n"
                        f"📊 Ваши права:\n"
                        f"{'• Мут/Кик/Бан' if has_permission(user_id, 2) else ''}\n"
                        f"{'• Черные списки' if has_permission(user_id, 3) else ''}\n"
-                       f"{'• Назначение ролей' if has_permission(user_id, 4) else ''}")
+                       f"{'• Назначение ролей' if has_permission(user_id, 4) else ''}",
+                       keyboard=keyboard)
         else:
             send_message(user_id, "❌ У вас нет доступа к админ-панели")
     
+    # Обработка кнопок админ-панели
+    elif text == '📋 Чёрные списки':
+        if has_permission(user_id, 3):
+            show_blacklist_command(user_id)
+        else:
+            send_message(user_id, "❌ Недостаточно прав")
+    
+    elif text == '➕ Добавить в ЧС':
+        if has_permission(user_id, 3):
+            user_states[user_id] = {'action': 'adding_blacklist', 'step': 1}
+            send_message(user_id, "✏️ Введите ник игрока для добавления в ЧС:")
+        else:
+            send_message(user_id, "❌ Недостаточно прав")
+    
+    elif text == '🗑 Удалить из ЧС':
+        if has_permission(user_id, 3):
+            user_states[user_id] = {'action': 'removing_blacklist', 'step': 1}
+            send_message(user_id, "✏️ Введите ник игрока для удаления из ЧС:")
+        else:
+            send_message(user_id, "❌ Недостаточно прав")
+    
+    elif text == '📊 Статистика':
+        if has_permission(user_id, 2):
+            show_stats_command(user_id)
+        else:
+            send_message(user_id, "❌ Недостаточно прав")
+    
+    elif text == '👥 Управление ролями':
+        if has_permission(user_id, 4):
+            keyboard = create_roles_management_keyboard()
+            send_message(user_id, "👑 Управление ролями\n\nВыберите действие:", keyboard=keyboard)
+        else:
+            send_message(user_id, "❌ Недостаточно прав")
+    
+    elif text == '📋 Список администраторов':
+        if has_permission(user_id, 4):
+            show_admins_list(user_id)
+        else:
+            send_message(user_id, "❌ Недостаточно прав")
+    
+    elif text == '🔙 В панель':
+        keyboard = create_admin_keyboard(user_id)
+        send_message(user_id, "🔙 Возврат в админ-панель", keyboard=keyboard)
+    
+    elif text == '🚪 Выйти':
+        user_states.pop(user_id, None)
+        send_message(user_id, "🚪 Вы вышли из админ-панели")
+    
     else:
         send_message(user_id, "🤔 Не понимаю команду. Напиши 'помощь' для списка команд.")
+        
+def create_admin_keyboard(user_id):
+    """Создает клавиатуру админ-панели"""
+    from vk_api.keyboard import VkKeyboard, VkKeyboardColor
+    keyboard = VkKeyboard(one_time=False, inline=False)
+    
+    keyboard.add_button("📋 Чёрные списки", color=VkKeyboardColor.PRIMARY)
+    keyboard.add_line()
+    keyboard.add_button("➕ Добавить в ЧС", color=VkKeyboardColor.POSITIVE)
+    keyboard.add_button("🗑 Удалить из ЧС", color=VkKeyboardColor.NEGATIVE)
+    keyboard.add_line()
+    keyboard.add_button("📊 Статистика", color=VkKeyboardColor.SECONDARY)
+    
+    if has_permission(user_id, 4):
+        keyboard.add_line()
+        keyboard.add_button("👥 Управление ролями", color=VkKeyboardColor.PRIMARY)
+    
+    keyboard.add_line()
+    keyboard.add_button("🚪 Выйти", color=VkKeyboardColor.NEGATIVE)
+    
+    return keyboard.get_keyboard()
 
+def create_roles_management_keyboard():
+    """Создает клавиатуру управления ролями"""
+    from vk_api.keyboard import VkKeyboard, VkKeyboardColor
+    keyboard = VkKeyboard(one_time=False, inline=False)
+    
+    keyboard.add_button("📋 Список администраторов", color=VkKeyboardColor.PRIMARY)
+    keyboard.add_line()
+    keyboard.add_button("👑 Назначить роль", color=VkKeyboardColor.POSITIVE)
+    keyboard.add_button("❌ Снять роль", color=VkKeyboardColor.NEGATIVE)
+    keyboard.add_line()
+    keyboard.add_button("🔙 В панель", color=VkKeyboardColor.SECONDARY)
+    
+    return keyboard.get_keyboard()
+
+def show_blacklist_command(user_id):
+    """Показывает черные списки"""
+    from blacklist import list_blacklist
+    blacklists = list_blacklist()
+    
+    if blacklists:
+        message = "📋 Все черные списки:\n\n"
+        for entry in blacklists[:10]:  # Показываем первые 10 записей
+            id, vk_id, nickname, type_, reason, added_by, expire_at = entry
+            expire_text = f"до {datetime.fromisoformat(expire_at).strftime('%d.%m.%Y')}" if expire_at else "бессрочно"
+            message += f"👤 {nickname} | 🗂 {type_} | ⏰ {expire_text} | 💬 {reason}\n"
+        
+        if len(blacklists) > 10:
+            message += f"\n... и еще {len(blacklists) - 10} записей"
+    else:
+        message = "📭 Черные списки пусты"
+    
+    send_message(user_id, message)
+
+def show_stats_command(user_id):
+    """Показывает статистику"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT COUNT(*) FROM blacklist")
+    total_blacklist = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM users")
+    total_users = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM users WHERE role > 1")
+    total_admins = cursor.fetchone()[0]
+    
+    conn.close()
+    
+    send_message(user_id,
+                f"📊 Статистика бота:\n\n"
+                f"👥 Пользователей: {total_users}\n"
+                f"👑 Администраторов: {total_admins}\n"
+                f"📋 Записей в ЧС: {total_blacklist}")
+
+def show_admins_list(user_id):
+    """Показывает список администраторов"""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT vk_id, role FROM users WHERE role > 1 ORDER BY role DESC")
+    admins = cursor.fetchall()
+    conn.close()
+    
+    if admins:
+        message = "👥 Текущая команда администраторов:\n\n"
+        for admin in admins:
+            admin_id, role_level = admin
+            role_name = get_role_name(role_level)
+            user_info = get_user_info(admin_id)
+            message += f"• {user_info} - {role_name} (уровень {role_level})\n"
+    else:
+        message = "📭 Нет назначенных администраторов"
+    
+    send_message(user_id, message)
+        
 # Запуск Flask приложения
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
