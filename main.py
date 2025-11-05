@@ -9,6 +9,7 @@ import json
 from datetime import datetime, timedelta
 from leadership import init_leadership_db
 from chat_commands import handle_chat_command, handle_new_chat_commands, process_user_message
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 from config import VK_TOKEN, GROUP_ID, DB_PATH, FOUNDER_ID
 
@@ -753,3 +754,14 @@ for event in longpoll.listen():
         print(f"❌ Ошибка в главном цикле: {e}")
         import traceback
         traceback.print_exc()
+        
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"VK Bot is running!")
+
+port = int(os.environ.get("PORT", 10000))  # Render требует переменную PORT
+httpd = HTTPServer(("", port), Handler)
+print(f"📡 Web-заглушка запущена на порту {port}")
+httpd.serve_forever()
