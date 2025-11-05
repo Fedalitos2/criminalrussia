@@ -5,6 +5,7 @@ import sqlite3
 from config import DB_PATH
 from vk_api.utils import get_random_id
 from leadership import add_leader, remove_leader, get_all_leaders
+from database import get_user_role, has_permission
 
 # Хранилище активных мутов и режима тишины
 active_mutes = {}
@@ -696,7 +697,7 @@ def ban_user(vk, peer_id, target_id, moderator_id, duration_days, reason, reply_
         print("✅ Пользователь кикнут")
         
         # Затем добавляем в черный список
-        from main import add_to_blacklist
+        from blacklist import add_blacklist as add_to_blacklist
         nickname = f"id{target_id}"
         add_to_blacklist(nickname, "ЧСП", duration_days, reason, moderator_id)
         print("✅ Пользователь добавлен в ЧС")
