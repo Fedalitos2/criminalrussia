@@ -313,6 +313,266 @@ def process_webhook_message(msg):
         import traceback
         traceback.print_exc()
 
+def process_dm_message(user_id, text, msg):
+    """Обрабатывает личные сообщения"""
+    current_state = user_states.get(user_id, {})
+    
+    # Обработка пошаговых действий для добавления в ЧС
+    if current_state.get('action') == 'adding_blacklist':
+        if current_state.get('step') == 1:  # Ожидаем ник
+            user_states[user_id] = {
+                'action': 'adding_blacklist',
+                'step': 2,
+                'nickname': text
+            }
+            keyboard = create_blacklist_types_keyboard()
+            send_message(user_id, "📂 Выберите тип черного списка:", keyboard=keyboard)
+            return
+            
+        elif current_state.get('step') == 2:  # Ожидаем тип ЧС
+            if text.upper() in BLACKLIST_TYPES:
+                user_states[user_id] = {
+                    'action': 'adding_blacklist', 
+                    'step': 3,
+                    'nickname': current_state['nickname'],
+                    'bl_type': text.upper()
+                }
+                send_message(user_id, "⏳ Введите срок в днях (0 для бессрочно):")
+            else:
+                send_message(user_id, "❌ Неверный тип ЧС. Выберите из предложенных:")
+            return
+                
+        elif current_state.get('step') == 3:  # Ожидаем срок
+            try:
+                days = int(text)
+                if days < 0:
+                    raise ValueError
+                
+                user_states[user_id] = {
+                    'action': 'adding_blacklist',
+                    'step': 4, 
+                    'nickname': current_state['nickname'],
+                    'bl_type': current_state['bl_type'],
+                    'days': days
+                }
+                send_message(user_id, "📝 Введите причину:")
+            except ValueError:
+                send_message(user_id, "❌ Введите корректное число дней:")
+            return
+                
+        elif current_state.get('step') == 4:  # Ожидаем причину
+            nickname = current_state['nickname']
+            bl_type = current_state['bl_type']
+            days = current_state['days']
+            
+            # Добавляем в ЧС
+            from blacklist import add_blacklist
+            add_blacklist(None, nickname, bl_type, user_id, days, text)
+            
+            days_text = "бессрочно" if days == 0 else f"{days} дней"
+            keyboard = create_admin_keyboard(user_id)
+            send_message(user_id, 
+                       f"✅ Игрок {nickname} добавлен в {bl_type}\n"
+                       f"⏰ Срок: {days_text}\n"
+                       f"📝 Причина: {text}",
+                       keyboard=keyboard)
+            
+            # Завершаем действие
+            user_states.pop(user_id, None)
+        return
+    
+    # Обработка пошаговых действий для удаления из ЧС
+    elif current_state.get('action') == 'removing_blacklist':
+        if current_state.get('step') == 1:  # Ожидаем ник
+            user_states[user_id] = {
+                'action': 'removing_blacklist',
+                'step': 2, 
+                'nickname': text
+            }
+            send_message(user_id, "📂 Введите тип ЧС для удаления:")
+            return
+            
+        elif current_state.get('step') == 2:  # Ожидаем тип ЧС
+            nickname = current_state['nickname']
+            bl_type = text.upper()
+            
+            from blacklist import remove_blacklist_by_nickname
+            if remove_blacklist_by_nickname(nickname, bl_type):
+                keyboard = create_admin_keyboard(user_id)
+                send_message(user_id, f"✅ Игрок {nickname} удален из {bl_type}", keyboard=keyboard)
+            else:
+                keyboard = create_admin_keyboard(user_id)
+                send_message(user_id, f"❌ Игрок {nickname} не найден в {bl_type}", keyboard=keyboard)
+            
+            user_states.pop(user_id, None)
+        return
+
+    # Обработка пошаговых действий для назначения роли
+    elif current_state.get('action') == 'assigning_role':
+        if current_state.get('step') == 1:  # Ожидаем ID пользователя
+            try:
+                target_id = int(text)
+                user_states[user_id] = {
+                    'action': 'assigning_role',
+                    'step': 2,
+                    'target_id': target_id
+                }
+                send_message(user_id, "🎯 Выберите роль для назначения:\n\n1 - Пользователь\n2 - Модератор\n3 - Администратор\n4 - Руководитель\n5 - Технический администратор")
+            except ValueError:
+                send_message(user_id, "❌ Введите корректный ID пользователя (только цифры):")
+            return
+        
+        elif current_state.get('step') == 2:  # Ожидаем уровень роли
+            try:
+                role_level = int(text)
+                if 1 <= role_level <= 5:
+                    target_id = current_state['target_id']
+                    
+                    # Проверяем права
+                    user_role = get_user_role(user_id)
+                    if role_level >= user_role:
+                        keyboard = create_roles_management_keyboard()
+                        send_message(user_id, "❌ Вы не можете назначать роли выше или равные своей", keyboard=keyboard)
+                    else:
+                        set_user_role(target_id, role_level, user_id)
+                        role_name = get_role_name(role_level)
+                        keyboard = create_roles_management_keyboard()
+                        target_info = get_user_info(target_id)
+                        send_message(user_id, f"✅ Пользователю {target_info} назначена роль: {role_name}", keyboard=keyboard)
+                else:
+                    send_message(user_id, "❌ Неверный уровень роли. Введите число от 1 до 5:")
+                    return
+            except ValueError:
+                send_message(user_id, "❌ Введите корректный уровень роли (число от 1 до 5):")
+                return
+            
+            user_states.pop(user_id, None)
+        return
+
+    # Обработка пошаговых действий для снятия роли
+    elif current_state.get('action') == 'removing_role':
+        if current_state.get('step') == 1:  # Ожидаем ID пользователя
+            try:
+                target_id = int(text)
+                remove_user_role(target_id, user_id)
+                keyboard = create_roles_management_keyboard()
+                target_info = get_user_info(target_id)
+                send_message(user_id, f"✅ С пользователя {target_info} снята роль", keyboard=keyboard)
+                user_states.pop(user_id, None)
+            except ValueError:
+                send_message(user_id, "❌ Введите корректный ID пользователя (только цифры):")
+        return
+
+    # Обработка обычных команд
+    text_lower = text.lower()
+    
+    if text_lower in ['начать', 'start', '/start']:
+        send_message(user_id, 
+                   "👋 Привет! Я профессиональный бот-модератор\n\n"
+                   "📋 Основные функции:\n"
+                   "• Управление черных списков\n"
+                   "• Модерация чатов\n"
+                   "• Режим тишины\n"
+                   "• Система ролей\n\n"
+                   "Напиши 'помощь' для списка команд.")
+    
+    elif text_lower == 'помощь':
+        help_text = "📋 Доступные команды:\n" \
+                   "• начать - начать работу\n" \
+                   "• помощь - это сообщение\n" \
+                   "• моя роль - узнать свою роль\n" \
+                   "• панель - админ-панель (если есть права)\n"
+        
+        if has_permission(user_id, 4):
+            help_text += "• роль <id> <уровень> - назначить роль\n" \
+                       "• роли - список администраторов\n"
+        
+        send_message(user_id, help_text)
+    
+    elif text_lower == 'моя роль':
+        role_level = get_user_role(user_id)
+        role_name = get_role_name(role_level)
+        send_message(user_id, f"🎭 Ваша роль: {role_name} (уровень {role_level})")
+    
+    elif text_lower == 'панель':
+        if has_permission(user_id, 2):  # Модератор и выше
+            role_name = get_role_name(get_user_role(user_id))
+            keyboard = create_admin_keyboard(user_id)
+            send_message(user_id, 
+                       f"🛠 Добро пожаловать в админ-панель, {role_name}!\n\n"
+                       f"📊 Ваши права:\n"
+                       f"{'• Мут/Кик/Бан' if has_permission(user_id, 2) else ''}\n"
+                       f"{'• Черные списки' if has_permission(user_id, 3) else ''}\n"
+                       f"{'• Назначение ролей' if has_permission(user_id, 4) else ''}",
+                       keyboard=keyboard)
+        else:
+            send_message(user_id, "❌ У вас нет доступа к админ-панели")
+    
+    # Обработка кнопок админ-панели
+    elif text == '📋 Чёрные списки':
+        if has_permission(user_id, 3):
+            show_blacklist_command(user_id)
+        else:
+            send_message(user_id, "❌ Недостаточно прав")
+    
+    elif text == '➕ Добавить в ЧС':
+        if has_permission(user_id, 3):
+            user_states[user_id] = {'action': 'adding_blacklist', 'step': 1}
+            send_message(user_id, "✏️ Введите ник игрока для добавления в ЧС:")
+        else:
+            send_message(user_id, "❌ Недостаточно прав")
+    
+    elif text == '🗑 Удалить из ЧС':
+        if has_permission(user_id, 3):
+            user_states[user_id] = {'action': 'removing_blacklist', 'step': 1}
+            send_message(user_id, "✏️ Введите ник игрока для удаления из ЧС:")
+        else:
+            send_message(user_id, "❌ Недостаточно прав")
+    
+    elif text == '📊 Статистика':
+        if has_permission(user_id, 2):
+            show_stats_command(user_id)
+        else:
+            send_message(user_id, "❌ Недостаточно прав")
+    
+    elif text == '👥 Управление ролями':
+        if has_permission(user_id, 4):
+            keyboard = create_roles_management_keyboard()
+            send_message(user_id, "👑 Управление ролями\n\nВыберите действие:", keyboard=keyboard)
+        else:
+            send_message(user_id, "❌ Недостаточно прав")
+    
+    elif text == '📋 Список администраторов':
+        if has_permission(user_id, 4):
+            show_admins_list(user_id)
+        else:
+            send_message(user_id, "❌ Недостаточно прав")
+    
+    elif text == '👑 Назначить роль':
+        if has_permission(user_id, 4):
+            user_states[user_id] = {'action': 'assigning_role', 'step': 1}
+            send_message(user_id, "✏️ Введите ID пользователя для назначения роли:")
+        else:
+            send_message(user_id, "❌ Недостаточно прав")
+    
+    elif text == '❌ Снять роль':
+        if has_permission(user_id, 4):
+            user_states[user_id] = {'action': 'removing_role', 'step': 1}
+            send_message(user_id, "✏️ Введите ID пользователя для снятия роли:")
+        else:
+            send_message(user_id, "❌ Недостаточно прав")
+    
+    elif text == '🔙 В панель':
+        keyboard = create_admin_keyboard(user_id)
+        send_message(user_id, "🔙 Возврат в админ-панель", keyboard=keyboard)
+    
+    elif text == '🚪 Выйти':
+        user_states.pop(user_id, None)
+        send_message(user_id, "🚪 Вы вышли из админ-панели")
+    
+    else:
+        send_message(user_id, "🤔 Не понимаю команду. Напиши 'помощь' для списка команд.")
+
 def process_webhook_user_message(msg):
     """Аналог process_user_message для вебхуков"""
     try:
