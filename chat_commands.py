@@ -7,6 +7,9 @@ from vk_api.utils import get_random_id
 from leadership import add_leader, remove_leader, get_all_leaders
 from database import get_user_role, has_permission
 
+active_mutes = {}
+silence_mode = {}
+
 def handle_chat_command(vk, msg, user_id, text, peer_id):
     """Обрабатывает старые команды модерации в чатах (с !)"""
     print(f"🔧 Обрабатываю старую команду в чате: {text}")
@@ -753,17 +756,18 @@ def warn_user(vk, peer_id, target_id, moderator_id, reason, reply_to=None):
         # Импортируем функцию из main.py
         from main import add_warning
         
-        warning_count = add_warning(target_id, moderator_id, reason)
+        result = add_warning(target_id, moderator_id, reason)
         
         target_info = get_user_info(vk, target_id)
         moderator_info = get_user_info(vk, moderator_id)
         
-        if warning_count == "auto_kick":
+        if result == "auto_kick":
             send_chat_message(vk, peer_id,
                             f"🚨 АВТОМАТИЧЕСКИЙ КИК\n"
                             f"👤 Пользователь: {target_info}\n"
                             f"📝 Причина: 3+ предупреждений\n"
-                            f"👮 Система: Автоматически",
+                            f"👮 Система: Автоматически\n"
+                            f"💬 Пользователь кикнут из всех чатов",
                             reply_to=reply_to)
         else:
             send_chat_message(vk, peer_id,
@@ -771,7 +775,7 @@ def warn_user(vk, peer_id, target_id, moderator_id, reason, reply_to=None):
                             f"👤 Пользователь: {target_info}\n"
                             f"📝 Причина: {reason}\n"
                             f"👮 Модератор: {moderator_info}\n"
-                            f"🔢 Всего предупреждений: {warning_count}/3",
+                            f"🔢 Всего предупреждений: {result}/3",
                             reply_to=reply_to)
                             
     except Exception as e:
