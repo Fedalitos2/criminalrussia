@@ -391,12 +391,96 @@ def process_dm_message(user_id, text, msg):
     """Обрабатывает личные сообщения"""
     current_state = user_states.get(user_id, {})
     
-    # Обработка пошаговых действий (упрощенная версия)
-    if current_state.get('action'):
-        send_message(user_id, "❌ Действие отменено из-за перехода на webhooks")
-        user_states.pop(user_id, None)
+    # Обработка пошаговых действий для добавления в ЧС
+    if current_state.get('action') == 'adding_blacklist':
+        if current_state.get('step') == 1:  # Ожидаем ник
+            user_states[user_id] = {
+                'action': 'adding_blacklist',
+                'step': 2,
+                'nickname': text
+            }
+            keyboard = create_blacklist_types_keyboard()
+            send_message(user_id, "📂 Выберите тип черного списка:", keyboard=keyboard)
+            return
+            
+        elif current_state.get('step') == 2:  # Ожидаем тип ЧС
+            if text.upper() in BLACKLIST_TYPES:
+                user_states[user_id] = {
+                    'action': 'adding_blacklist', 
+                    'step': 3,
+                    'nickname': current_state['nickname'],
+                    'bl_type': text.upper()
+                }
+                send_message(user_id, "⏳ Введите срок в днях (0 для бессрочно):")
+            else:
+                send_message(user_id, "❌ Неверный тип ЧС. Выберите из предложенных:")
+            return
+                
+        elif current_state.get('step') == 3:  # Ожидаем срок
+            try:
+                days = int(text)
+                if days < 0:
+                    raise ValueError
+                
+                user_states[user_id] = {
+                    'action': 'adding_blacklist',
+                    'step': 4, 
+                    'nickname': current_state['nickname'],
+                    'bl_type': current_state['bl_type'],
+                    'days': days
+                }
+                send_message(user_id, "📝 Введите причину:")
+            except ValueError:
+                send_message(user_id, "❌ Введите корректное число дней:")
+            return
+                
+        elif current_state.get('step') == 4:  # Ожидаем причину
+            nickname = current_state['nickname']
+            bl_type = current_state['bl_type']
+            days = current_state['days']
+            
+            # Добавляем в ЧС
+            from blacklist import add_blacklist
+            add_blacklist(None, nickname, bl_type, user_id, days, text)
+            
+            days_text = "бессрочно" if days == 0 else f"{days} дней"
+            keyboard = create_admin_keyboard(user_id)
+            send_message(user_id, 
+                       f"✅ Игрок {nickname} добавлен в {bl_type}\n"
+                       f"⏰ Срок: {days_text}\n"
+                       f"📝 Причина: {text}",
+                       keyboard=keyboard)
+            
+            # Завершаем действие
+            user_states.pop(user_id, None)
         return
     
+    # Обработка пошаговых действий для удаления из ЧС
+    elif current_state.get('action') == 'removing_blacklist':
+        if current_state.get('step') == 1:  # Ожидаем ник
+            user_states[user_id] = {
+                'action': 'removing_blacklist',
+                'step': 2, 
+                'nickname': text
+            }
+            send_message(user_id, "📂 Введите тип ЧС для удаления:")
+            return
+            
+        elif current_state.get('step') == 2:  # Ожидаем тип ЧС
+            nickname = current_state['nickname']
+            bl_type = text.upper()
+            
+            from blacklist import remove_blacklist_by_nickname
+            if remove_blacklist_by_nickname(nickname, bl_type):
+                keyboard = create_admin_keyboard(user_id)
+                send_message(user_id, f"✅ Игрок {nickname} удален из {bl_type}", keyboard=keyboard)
+            else:
+                keyboard = create_admin_keyboard(user_id)
+                send_message(user_id, f"❌ Игрок {nickname} не найден в {bl_type}", keyboard=keyboard)
+            
+            user_states.pop(user_id, None)
+        return
+
     # Обработка обычных команд
     text_lower = text.lower()
     
@@ -431,7 +515,6 @@ def process_dm_message(user_id, text, msg):
     elif text_lower == 'панель':
         if has_permission(user_id, 2):  # Модератор и выше
             role_name = get_role_name(get_user_role(user_id))
-            # Вместо текста отправляем клавиатуру с кнопками
             keyboard = create_admin_keyboard(user_id)
             send_message(user_id, 
                        f"🛠 Добро пожаловать в админ-панель, {role_name}!\n\n"
@@ -547,6 +630,21 @@ def show_blacklist_command(user_id):
         message = "📭 Черные списки пусты"
     
     send_message(user_id, message)
+    
+def create_blacklist_types_keyboard():
+    """Создает клавиатуру выбора типа ЧС"""
+    from vk_api.keyboard import VkKeyboard, VkKeyboardColor
+    keyboard = VkKeyboard(one_time=False, inline=False)
+    
+    keyboard.add_button("ЧСП", color=VkKeyboardColor.PRIMARY)
+    keyboard.add_button("ЧСА", color=VkKeyboardColor.PRIMARY)
+    keyboard.add_line()
+    keyboard.add_button("ЧСЛ", color=VkKeyboardColor.PRIMARY)
+    keyboard.add_button("ЧСЗ", color=VkKeyboardColor.PRIMARY)
+    keyboard.add_line()
+    keyboard.add_button("🔙 Назад", color=VkKeyboardColor.NEGATIVE)
+    
+    return keyboard.get_keyboard()
 
 def show_stats_command(user_id):
     """Показывает статистику"""
@@ -589,6 +687,7 @@ def show_admins_list(user_id):
         message = "📭 Нет назначенных администраторов"
     
     send_message(user_id, message)
+    
         
 # Запуск Flask приложения
 if __name__ == '__main__':
