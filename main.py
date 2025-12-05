@@ -689,7 +689,7 @@ def process_webhook_user_message(msg):
         if peer_id < 2000000000:
             return True
             
-        logger.info(f"🔍 Проверка сообщения от {user_id} в чате {peer_id}, message_id: {message_id}")
+        logger.info(f"🔍 Проверка сообщения от {user_id} в чате {peer_id}, message_id: {message_id}, текст: {text}")
         
         # Игнорируем команды бота
         if text.startswith('/') or text.startswith('!') or text.lower() == 'кто':
@@ -699,25 +699,10 @@ def process_webhook_user_message(msg):
         if has_permission(user_id, 2):
             return True
         
-        # Используем новую систему модерации
-        if moderation_system.should_delete_message(vk, msg, get_user_role):
-            logger.info(f"🔇 УДАЛЯЕМ сообщение от {user_id}, message_id: {message_id}")
-            
-            # УДАЛЯЕМ СООБЩЕНИЕ
-            if delete_user_message(peer_id, message_id, user_id):
-                # Отправляем уведомление (только для мута)
-                mute_info = moderation_system.check_mute(user_id, peer_id)
-                if mute_info:
-                    time_left = mute_info['until'] - datetime.now()
-                    minutes_left = max(1, int(time_left.total_seconds() / 60))
-                    
-                    send_chat_message(peer_id,
-                                    f"🔇 Вы в муте! Осталось: {minutes_left} мин.\n"
-                                    f"До: {mute_info['until'].strftime('%H:%M:%S')}")
-                
-                return False
-            
-            # Если не удалось удалить, все равно блокируем
+        # Используем централизованную систему для проверки и удаления
+        # Вместо should_delete_message используем handle_message_deletion
+        if moderation_system.handle_message_deletion(vk, msg, get_user_role):
+            logger.info(f"🔇 Сообщение от {user_id} удалено по правилам модерации")
             return False
             
         return True
@@ -729,60 +714,43 @@ def process_webhook_user_message(msg):
         return True
 
 def delete_user_message(peer_id, message_id, user_id):
-    """Удаляет сообщение пользователя"""
+    """Простая обертка для удаления сообщений"""
     try:
-        # В вебхуках VK может быть несколько форматов message_id
-        # Пробуем разные варианты если message_id = 0
-        
-        if not message_id or message_id == 0:
-            logger.warning(f"⚠️ message_id = 0, пытаемся найти альтернативный ID")
-            
-            # Пробуем получить ID из conversation_message_id или другого поля
-            # Для этого нужен доступ к исходному сообщению
-            
-            # Если не удалось получить валидный ID, возвращаем False
-            logger.error(f"❌ Не удалось получить валидный message_id для удаления")
-            return False
-        
-        logger.info(f"🗑️ Удаляем сообщение {message_id} от пользователя {user_id} в чате {peer_id}")
-        
-        # Пробуем удалить
-        try:
-            result = vk.messages.delete(
-                message_ids=message_id,
-                delete_for_all=True,
-                peer_id=peer_id
-            )
-            logger.info(f"✅ Сообщение {message_id} от пользователя {user_id} удалено, результат: {result}")
-            return True
-            
-        except vk_api.exceptions.ApiError as e:
-            if e.code == 924:  # Сообщение уже удалено
-                logger.info(f"ℹ️ Сообщение {message_id} уже было удалено")
-                return True
-            elif e.code == 15:  # Нет прав на удаление
-                logger.warning(f"⚠️ Нет прав на удаление сообщения {message_id}")
-                return False
-            elif e.code == 909:  # Сообщение слишком старое
-                logger.warning(f"⚠️ Сообщение {message_id} слишком старое для удаления (24 часа+)")
-                return False
-            elif e.code == 100:  # Неверный параметр
-                logger.error(f"❌ Неверный message_id {message_id} для удаления")
-                return False
-            else:
-                logger.error(f"❌ Ошибка API при удалении: [{e.code}] {e.error_msg}")
-                return False
-                
+        result = vk.messages.delete(
+            message_ids=message_id,
+            delete_for_all=True,
+            peer_id=peer_id
+        )
+        logger.info(f"✅ Сообщение {message_id} от пользователя {user_id} удалено")
+        return True
     except Exception as e:
-        logger.error(f"❌ Общая ошибка удаления сообщения: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"❌ Ошибка удаления сообщения: {e}")
         return False
 
 def check_user_mute(user_id, peer_id):
     """Проверяет, находится ли пользователь в муте"""
     # Используем mute_system вместо active_mutes
     return mute_system.check_mute(user_id, peer_id)
+
+def debug_message_handling():
+    """Функция для отладки обработки сообщений"""
+    logger.info("="*50)
+    logger.info("🔧 ДЕБАГ СИСТЕМЫ МОДЕРАЦИИ")
+    logger.info("="*50)
+    
+    # Проверяем активные муты
+    active_mutes = moderation_system.get_active_mutes()
+    logger.info(f"Активные муты: {len(active_mutes)}")
+    
+    # Проверяем режим тишины
+    for peer_id, enabled in silence_mode.items():
+        logger.info(f"Чат {peer_id}: режим тишины = {enabled}")
+    
+    # Проверяем через mute_system
+    mutes = mute_system.get_active_mutes()
+    logger.info(f"Mute system active mutes: {len(mutes)}")
+    
+    logger.info("="*50)
 
 def set_user_role(target_id, role_level, moderator_id):
     """Назначает роль пользователю"""
