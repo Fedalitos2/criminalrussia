@@ -461,17 +461,21 @@ def handle_new_chat_commands(vk, msg, user_id, text, peer_id):
         show_help(vk, peer_id, user_id, reply_to=msg['id'])
         return
     
-    # Команда /silence on
+# На это:
     if text.lower() == '/silence on':
-        if has_permission(user_id, 3):
-            moderation_system.set_silence_mode(peer_id, True)
-            send_chat_message(vk, peer_id, 
-                            "🔇 РЕЖИМ ТИШИНЫ ВКЛЮЧЕН\n"
-                            "Теперь писать могут только администраторы",
-                            reply_to=msg['id'])
-        else:
-            send_chat_message(vk, peer_id, "❌ У вас нет прав для управления режимом тишины", reply_to=msg['id'])
-        return
+       if has_permission(user_id, 3):
+        # Глобальный режим тишины
+        from main import silence_mode
+        silence_mode[peer_id] = True
+        # А также через систему модерации
+        moderation_system.set_silence_mode(peer_id, True)
+        send_chat_message(vk, peer_id, 
+                        "🔇 РЕЖИМ ТИШИНЫ ВКЛЮЧЕН\n"
+                        "Теперь писать могут только администраторы",
+                        reply_to=msg['id'])
+    else:
+        send_chat_message(vk, peer_id, "❌ У вас нет прав для управления режимом тишины", reply_to=msg['id'])
+    return  
     
     # Команда /silence off
     if text.lower() == '/silence off':
