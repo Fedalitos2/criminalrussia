@@ -262,6 +262,89 @@ class ModerationSystem:
     def get_mute_info(self, user_id, peer_id):
         """Получает информацию о муте"""
         return self.check_mute(user_id, peer_id)
+    
+    # Добавьте этот метод в класс ModerationSystem в moderation.py:
+
+def delete_user_message(self, vk, peer_id, message_id, user_id):
+    """Удаляет сообщение пользователя"""
+    try:
+        result = vk.messages.delete(
+            message_ids=message_id,
+            delete_for_all=True,
+            peer_id=peer_id
+        )
+        logger.info(f"✅ Сообщение {message_id} от пользователя {user_id} удалено")
+        return True
+    except Exception as e:
+        logger.error(f"❌ Ошибка удаления сообщения {message_id}: {e}")
+        return False
+
+def handle_message_deletion(self, vk, msg, user_role_func):
+    """Обрабатывает удаление сообщений (режим тишины и муты)"""
+    try:
+        peer_id = msg.get('peer_id', 0)
+        user_id = msg.get('from_id', 0)
+        message_id = msg.get('id', 0)
+        text = msg.get('text', '').strip()
+        
+        # Только для чатов
+        if peer_id < 2000000000:
+            return False
+        
+        # Игнорируем команды бота
+        if text.startswith('/') or text.startswith('!') or text.lower() == 'кто':
+            return False
+        
+        # Админы могут писать всегда
+        if user_role_func(user_id) >= 2:  # Модератор и выше
+            return False
+        
+        should_delete = False
+        delete_reason = ""
+        
+        # 1. Проверяем режим тишины
+        if self.get_silence_mode(peer_id):
+            should_delete = True
+            delete_reason = "🔇 Режим тишины включен. Писать могут только администраторы."
+        
+        # 2. Проверяем мут
+        mute_data = self.check_mute(user_id, peer_id)
+        if mute_data:
+            should_delete = True
+            time_left = mute_data['until'] - datetime.now()
+            minutes_left = max(1, int(time_left.total_seconds() / 60))
+            delete_reason = f"🔇 Вы в муте! Осталось: {minutes_left} мин.\nДо: {mute_data['until'].strftime('%H:%M:%S')}"
+        
+        if should_delete:
+            # Удаляем сообщение
+            if self.delete_user_message(vk, peer_id, message_id, user_id):
+                # Отправляем уведомление о причине удаления
+                if delete_reason:
+                    try:
+                        vk.messages.send(
+                            peer_id=peer_id,
+                            message=delete_reason,
+                            random_id=0,  # VK API самостоятельно генерирует random_id
+                            reply_to=message_id
+                        )
+                    except:
+                        # Если не удалось отправить с reply_to, отправляем без него
+                        try:
+                            vk.messages.send(
+                                peer_id=peer_id,
+                                message=delete_reason,
+                                random_id=0
+                            )
+                        except Exception as e:
+                            logger.error(f"❌ Ошибка отправки уведомления: {e}")
+                return True
+            return False
+        
+        return False
+        
+    except Exception as e:
+        logger.error(f"❌ Ошибка обработки удаления сообщения: {e}")
+        return False
 
 # Глобальный экземпляр
 moderation_system = ModerationSystem()
