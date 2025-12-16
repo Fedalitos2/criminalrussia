@@ -1,0 +1,5 @@
+vk-api
+flask
+requests
+beautifulsoup4
+feedparser
