@@ -1,4 +1,4 @@
-VK_TOKEN = "тут токен"
-CONFIRMATION_TOKEN = "токен подтверждения"
-CALLBACK_SECRET = "секрет"
-GROUP_ID = групп id без скобок
+VK_TOKEN="vk1.a.-ox2hhjBLBzn0Box9S3zHA-_CNmIymwC7RGiNeRKLXd7L5wtQrDfxtT4bs6SNfdILR6R5825-XuPGjsajNUC_9ZZGwP-YynacBBRmyah_L_vSxRHL-zXE"
+CONFIRMATION_TOKEN = "b6e84020"
+CALLBACK_SECRET = "rols11procar10111011"
+GROUP_ID = 233672208
