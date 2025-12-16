@@ -1,1 +1,0 @@
-# VK Moder Bot 
