@@ -1856,6 +1856,15 @@ def callback():
 
     return 'ok'
 
+# ===================== HEALTH CHECK =====================
+@app.route('/health', methods=['GET'])
+def health_check():
+    return 'OK', 200
+
+@app.route('/ping', methods=['GET'])
+def ping():
+    return 'pong', 200
+
 if __name__ == '__main__':
     print(f"🚀 {BOT_NAME} запущен!")
     print(f"👑 Владелец: {OWNER_ID}")
