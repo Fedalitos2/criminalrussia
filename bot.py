@@ -783,34 +783,68 @@ def process_message(message):
             send_message(peer_id, "❌ Недостаточно прав.")
             return
 
-        banlist = get_all_banned_users()
-        if not banlist:
+        # Получаем список забаненных
+        banned_users = get_all_banned_users()
+        
+        if not banned_users:
             send_message(peer_id, "✅ Нет пользователей в черном списке.")
             return
 
-        msg = "🚫 **Список заблокированных:**\n\n"
-        for uid, reason, until, admin_id in banlist:
-            name = get_user_info(uid)
+        # Формируем сообщение
+        message_lines = ["🚫 **Список заблокированных:**\n"]
+        
+        for user_data in banned_users:
+            user_id = user_data[0]
+            reason = user_data[1]
+            end_date = user_data[2]
+            admin_id = user_data[3]
+            
+            user_name = get_user_info(user_id)
             admin_name = get_user_info(admin_id)
             
+            # Определяем тип бана
             ban_type = "ЧС"
-            if "ЧСП" in reason:
+            if " | ЧСП" in reason:
                 ban_type = "ЧСП"
-            elif "ОЧС" in reason:
+                reason_clean = reason.replace(" | ЧСП", "")
+            elif " | ОЧС" in reason:
                 ban_type = "ОЧС"
-            elif "ЧС(ПОСТ)" in reason:
+                reason_clean = reason.replace(" | ОЧС", "")
+            elif " | ЧС(ПОСТ)" in reason:
                 ban_type = "ЧС ПОСТОВ"
-            elif "ЧСА" in reason:
+                reason_clean = reason.replace(" | ЧС(ПОСТ)", "")
+            elif " | ЧСА" in reason:
                 ban_type = "ЧС АДМИНИСТРАЦИИ"
-                
-            duration = "Навсегда" if until == "PERMANENT" else f"до {until}"
-            msg += f"🔘 [id{uid}|{name}]\n"
-            msg += f"📄 **{ban_type}**: {reason.replace(' | ' + ban_type, '')}\n"
-            msg += f"⏳ {duration}\n"
-            msg += f"🛡 [id{admin_id}|{admin_name}]\n\n"
-
-        send_message(peer_id, msg)
-        log_action(user_id, "Вывел banlist", True)
+                reason_clean = reason.replace(" | ЧСА", "")
+            else:
+                reason_clean = reason
+            
+            # Форматируем дату окончания
+            if end_date == "PERMANENT":
+                duration = "🔒 Навсегда"
+            else:
+                duration = f"⏳ До: {end_date}"
+            
+            message_lines.append(f"👤 [id{user_id}|{user_name}]")
+            message_lines.append(f"📛 Тип: {ban_type}")
+            message_lines.append(f"📄 Причина: {reason_clean}")
+            message_lines.append(f"{duration}")
+            message_lines.append(f"👮 Забанил: [id{admin_id}|{admin_name}]")
+            message_lines.append("─" * 30)
+        
+        # Отправляем сообщение
+        full_message = "\n".join(message_lines)
+        
+        # Если сообщение слишком длинное, разбиваем на части
+        if len(full_message) > 4000:
+            parts = [full_message[i:i+4000] for i in range(0, len(full_message), 4000)]
+            for part in parts:
+                send_message(peer_id, part)
+                time.sleep(0.5)  # Задержка между сообщениями
+        else:
+            send_message(peer_id, full_message)
+        
+        log_action(user_id, "Вывел список банов", True)
         
     elif text.startswith("/sysban"):
         required_level = get_command_level("/sysban")
@@ -1162,17 +1196,31 @@ def process_message(message):
             send_message(peer_id, "❌ Недостаточно прав.")
             return
 
-        data = get_all_warnings(peer_id)
-        if not data:
-            send_message(peer_id, "✅ Нет варнов в этом чате.")
+        # Получаем варны для этого чата
+        warnings_data = get_all_warnings(peer_id)
+        
+        if not warnings_data:
+            send_message(peer_id, "✅ В этом чате нет пользователей с варнами.")
             return
 
-        msg = "⚠ **Список варнов:**\n\n"
-        for uid, count in data:
-            name = get_user_info(uid)
-            msg += f"• [id{uid}|{name}] - {count} варн(а)\n"
+        # Формируем сообщение
+        message_lines = ["⚠ **Список предупреждений в этом чате:**\n"]
+        
+        for warning in warnings_data:
+            user_id = warning[0]
+            count = warning[1]
+            user_name = get_user_info(user_id)
             
-        send_message(peer_id, msg)
+            message_lines.append(f"• [id{user_id}|{user_name}] — {count} варн(а)")
+        
+        # Добавляем информацию о системе варнов
+        message_lines.append("\n📝 **Система варнов:**")
+        message_lines.append("1 варн — предупреждение")
+        message_lines.append("2 варна — последнее предупреждение")
+        message_lines.append("3 варна — автоматический кик")
+        
+        full_message = "\n".join(message_lines)
+        send_message(peer_id, full_message)
         
     elif text.startswith("/mute"):
         if admin_level < 1:
