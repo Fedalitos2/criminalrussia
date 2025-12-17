@@ -22,7 +22,6 @@ from types import SimpleNamespace
 import re
 import sqlite3
 import os
-import feedparser
 import time
 import requests
 import threading
