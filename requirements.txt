@@ -1,5 +1,0 @@
-Flask==2.3.3
-vk_api==11.9.9
-requests==2.31.0
-beautifulsoup4==4.12.2
-
