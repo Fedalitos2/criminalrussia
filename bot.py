@@ -4,7 +4,7 @@
 
 from db import *
 from utils import *
-from config import VK_TOKEN, CONFIRMATION_TOKEN, CALLBACK_SECRET
+from config import VK_TOKEN, CONFIRMATION_TOKEN, CALLBACK_SECRET, GROUP_ID
 
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
