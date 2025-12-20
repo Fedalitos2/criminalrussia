@@ -2950,26 +2950,42 @@ async def on_chat_message(message: Message):
 
 
 import asyncio
+import threading
 from aiohttp import web
 
-# Создаем простой веб-сервер
 async def health_check(request):
     return web.Response(text='Bot is running')
 
-app = web.Application()
-app.router.add_get('/', health_check)
-app.router.add_get('/health', health_check)
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    app.router.add_get('/health', health_check)
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 10000)
+    await site.start()
+    print("✅ Web-сервер запущен на порту 10000")
+    return runner  # Важно: возвращаем runner, чтобы потом корректно завершить
+
+def run_web_server_sync():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    runner = loop.run_until_complete(start_web_server())
+    try:
+        loop.run_forever()  # Запускаем цикл событий для сервера
+    finally:
+        loop.run_until_complete(runner.cleanup())
 
 if __name__ == "__main__":
-    # Запускаем веб-сервер в отдельной задаче
-    import threading
-    
-    def run_web():
-        web.run_app(app, host='0.0.0.0', port=10000)
-    
-    # Запускаем веб-сервер в отдельном потоке
-    web_thread = threading.Thread(target=run_web, daemon=True)
+    # 1. Сначала запускаем веб-сервер в отдельном потоке
+    web_thread = threading.Thread(target=run_web_server_sync, daemon=True)
     web_thread.start()
     
-    # Запускаем бота в основном потоке
+    # 2. Даем серверу пару секунд, чтобы точно подняться
+    import time
+    time.sleep(5)
+    
+    print("🚀 Запускаю бота VKBottle...")
+    # 3. Только потом запускаем бота (это заблокирует основной поток)
     bot.run_forever()
