@@ -1,0 +1,10 @@
+{
+  "bot-token": "vk1.a.-ox2hhjBLBzn0Box9S3zHA-_CNmIymwC7RGiNeRKLXd7L5wtQrDfxtT4bs6SNfdILR6R5825-XuPGjsajNUC_9ZZGwP-YynacBBRmyah_L_vSxRHL-zXEVDrfUXrADOOr2tdWrWl_RRY6BtN_tXNBC_GSm_7fkwVhnPoR-8t00YeOxWjkHcL5JwWoSScExgvgTXJw5fOt1puNwY0wlLPug",
+  "confirm-token": "36c87594",
+  "callback-secret": "rols11procar10111011",
+  "group-id": 233672208,
+  "super-admin-id": 709914900,
+  "nicks-max": 30,
+  "nonick-max": 70,
+  "blacklist-types": ["admins", "leaders", "users"]
+}
