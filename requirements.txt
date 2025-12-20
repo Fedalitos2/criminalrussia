@@ -3,4 +3,4 @@ aiogram==3.0.0b5
 aiohttp>=3.12.15
 requests>=2.31.0
 python-dotenv>=1.0.0
-pydantic>=2.5.0
+pydantic>=1.10.2,<2.0.0 
