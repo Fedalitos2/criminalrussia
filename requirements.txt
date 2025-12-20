@@ -1,6 +1,7 @@
-vkbottle>=4.6.0
-aiogram==3.0.0b5
-aiohttp>=3.12.15
-requests>=2.31.0
-python-dotenv>=1.0.0
-pydantic>=1.10.2,<2.0.0 
+# requirements.txt
+vkbottle==3.0.3
+aiogram==2.25.1
+aiohttp==3.8.6
+requests==2.31.0
+python-dotenv==1.0.0
+pydantic==1.10.13
