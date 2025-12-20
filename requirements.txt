@@ -1,4 +1,4 @@
-vkbottle==3.8.0
+vkbottle
 aiogram==2.25.1
 aiohttp==3.9.1
 sqlite3
